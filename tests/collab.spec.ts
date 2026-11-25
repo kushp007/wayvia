@@ -131,3 +131,67 @@ test('API status page shows local retry after first-load API failure', async ({ 
   await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
   expect(user.page.url()).toBe(urlAfterFailure)
 })
+
+test('trips persist across reloads and stay private to their owner', async ({ users }) => {
+  const [owner, other] = await users(2)
+  const first = 'New York ' + crypto.randomUUID()
+  const second = 'Lisbon ' + crypto.randomUUID()
+  const page = owner.page
+  const sidebar = page.locator('aside')
+  await Promise.all([page.goto('/home'), other.page.goto('/home')])
+  await expect(other.page.getByTestId('nav-user-name')).toHaveText(/\S/)
+
+  async function createTrip(title: string, destination: string) {
+    await sidebar.getByRole('button', { name: 'New trip' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Trip name').fill(title)
+    await dialog.getByLabel('Destination').fill(destination)
+    await dialog.getByLabel('Start date').fill('2027-03-13')
+    await dialog.getByLabel('End date').fill('2027-03-15')
+    await dialog.getByRole('button', { name: 'Create trip' }).click()
+    await expect(sidebar.getByRole('button', { name: title })).toBeVisible()
+    await expect(page.getByRole('heading', { name: title })).toBeVisible()
+  }
+
+  async function deleteSelected() {
+    await page.getByRole('button', { name: 'Trip options' }).click()
+    await page.getByRole('menuitem', { name: 'Delete trip' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete trip' }).click()
+  }
+
+  await createTrip(first, 'New York City')
+  await createTrip(second, 'Lisbon')
+  await other.page.reload()
+  await expect(other.page.getByRole('button', { name: 'New trip' })).toBeEnabled()
+  await expect(other.page.getByRole('button', { name: first })).toHaveCount(0)
+  await expect(other.page.getByRole('button', { name: second })).toHaveCount(0)
+
+  await sidebar.getByRole('button', { name: first }).click()
+  await expect(page.locator('.trip-hero')).toContainText('Mar 13')
+  await page.getByRole('button', { name: 'Trip options' }).click()
+  await page.getByRole('menuitem', { name: 'Edit trip details' }).click()
+  await page.getByRole('dialog').getByLabel('Description').fill('A weekend in Manhattan')
+  await page.getByRole('button', { name: 'Save details' }).click()
+  await expect(page.getByText('A weekend in Manhattan')).toBeVisible()
+  await page.getByRole('tab', { name: 'Budget' }).click()
+  await page.getByRole('button', { name: 'Edit budget' }).click()
+  await page.getByRole('dialog').getByLabel('Estimated group budget (USD)').fill('975.50')
+  await page.getByRole('button', { name: 'Save budget' }).click()
+  await expect(page.getByRole('status')).toHaveText(/Group budget saved/)
+  await page.reload()
+  await sidebar.getByRole('button', { name: first }).click()
+  await expect(page.getByText('A weekend in Manhattan')).toBeVisible()
+  await page.getByRole('tab', { name: 'Budget' }).click()
+  await expect(page.locator('.budget-numbers')).toContainText('$975.5')
+
+  await deleteSelected()
+  await expect(sidebar.getByRole('button', { name: first })).toHaveCount(0)
+  await sidebar.getByRole('button', { name: second }).click()
+  await expect(page.getByText('A weekend in Manhattan')).toHaveCount(0)
+  await deleteSelected()
+  await expect(sidebar.getByRole('button', { name: second })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign out' }).click()
+  await expect(page.getByTestId('nav-sign-in-button')).toBeVisible()
+  await expect(page.getByTestId('nav-user-name')).toHaveCount(0)
+})

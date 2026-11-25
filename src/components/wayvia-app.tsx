@@ -1,153 +1,244 @@
-'use client'
+import { useState } from 'react'
+import { useAuthProfileReady, useQuery, type UserProfile } from 'deepspace'
+import { ArrowRight, BarChart3, CalendarDays, ChevronRight, CloudSun, Compass, DollarSign, LayoutDashboard, Lightbulb, ListChecks, MapPin, Menu, MoreHorizontal, Plus, Sparkles, Users, Vote, X } from 'lucide-react'
+import { coverImage, DAY_MS, formatTripDate, MAX_TRIP_DAYS, tripDays, TRIPS, type TripRecord } from '@/lib/trips'
+import type { SavedTrip } from '@/lib/trip-client'
+import { AccountAvatar, accountName, WayviaAccount } from './wayvia-account'
+import { TripDialog, WayviaDialog, type TripDialogState } from './wayvia-trip-dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui'
 
-import { useMemo, useState } from "react"
-import { ArrowDown, ArrowDownUp, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Compass, Copy, CloudSun, DollarSign, Globe2, Heart, LayoutDashboard, Lightbulb, ListChecks, MapPin, Menu, MoreHorizontal, Plus, Search, Send, Settings, Sparkles, Sun, Users, Vote, X } from "lucide-react"
-import { initialTrip, places, weather, type Activity, type ActivityCategory, type Trip, type TripTab } from "@/lib/wayvia-data"
-import WayviaLanding from "@/components/wayvia-landing"
-
-const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
-const dayLabel = (day: number, startDate: string) => new Date(new Date(`${startDate}T12:00:00`).getTime() + (day - 1) * 86400000).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" })
-
-function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className="brand"><span className="brand-mark"><Compass size={19} strokeWidth={1.8} /></span>{!compact && <span>Wayvia</span>}</div>
-}
-
-function AvatarStack({ members, size = "normal" }: { members: Trip["members"]; size?: "normal" | "small" }) {
-  return <div className={`avatar-stack ${size}`} aria-label={`${members.length} trip members`}>{members.map(member => <span key={member.id} title={member.name} className="avatar" style={{ background: member.color }}>{member.initials}</span>)}</div>
-}
-
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-head"><h2 id="modal-title">{title}</h2><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={18} /></button></div>{children}</section></div>
-}
-
-function ActivityCard({ activity, trip, onVote, onSchedule }: { activity: Activity; trip: Trip; onVote: (id: string) => void; onSchedule: (id: string) => void }) {
-  const hasVoted = activity.votes.includes("you")
-  return <article className="activity-card">
-    {activity.image && <img className="activity-image" src={activity.image} alt="" />}
-    <div className="activity-main"><div className="activity-meta"><span className="tag">{activity.category}</span>{activity.day && <span className="scheduled-tag"><Check size={12} /> In itinerary</span>}<button className="icon-button tiny more-button" aria-label={`More options for ${activity.name}`}><MoreHorizontal size={17} /></button></div><h3>{activity.name}</h3><p className="muted"><MapPin size={13} />{activity.location}</p><p className="activity-description">{activity.description}</p><div className="activity-bottom"><span>{money(activity.cost)} <small>per person</small></span><span>{activity.duration}</span></div></div>
-    <div className="vote-rail"><button onClick={() => onVote(activity.id)} aria-label={hasVoted ? "Remove your vote" : "Upvote activity"} className={`vote-button ${hasVoted ? "voted" : ""}`}><ArrowUp size={16} /></button><strong>{activity.votes.length}</strong><small>votes</small><button onClick={() => onSchedule(activity.id)} aria-label={activity.day ? "Already in itinerary" : "Add to itinerary"} className={`schedule-button ${activity.day ? "is-scheduled" : ""}`}>{activity.day ? <Check size={15} /> : <Plus size={15} />}</button></div>
-  </article>
-}
-
-function BudgetRing({ percent }: { percent: number }) {
-  return <div className="budget-ring" style={{ "--progress": `${Math.min(percent, 100)}%` } as React.CSSProperties}><div><strong>{percent}%</strong><span>planned</span></div></div>
-}
+const tabs = [
+  { label: 'Overview', icon: LayoutDashboard }, { label: 'Discover', icon: Compass },
+  { label: 'Voting', icon: Vote }, { label: 'Itinerary', icon: CalendarDays },
+  { label: 'Budget', icon: BarChart3 }, { label: 'AI planner', icon: Sparkles },
+] as const
+type TripTab = typeof tabs[number]['label']
+const money = (value: number) => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2,
+}).format(value)
+const shortDate = { month: 'short', day: 'numeric' } as const
+const longDate = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' } as const
 
 export default function WayviaApp() {
-  const [showLanding, setShowLanding] = useState(false)
-  const [trip, setTrip] = useState<Trip>(initialTrip)
-  const [activeTab, setActiveTab] = useState<TripTab>("Overview")
-  const [activeNav, setActiveNav] = useState("Overview")
-  const [showCreate, setShowCreate] = useState(false)
-  const [showInvite, setShowInvite] = useState(false)
-  const [showAdd, setShowAdd] = useState(false)
+  const { isSignedIn, user, userLoading } = useAuthProfileReady({ requireUser: true })
+  if (!isSignedIn) return null
+  if (!user || userLoading) return <div className="wayvia-loading" role="status">Loading your profile…</div>
+  return <Workspace key={user.id} user={user} />
+}
+
+function Workspace({ user }: { user: UserProfile }) {
+  const { records, status } = useQuery<TripRecord>(TRIPS, { orderBy: 'updatedAt', orderDir: 'desc' })
+  const [selected, setSelected] = useState<string>()
+  const [view, setView] = useState<'trip' | 'list'>('trip')
+  const [tab, setTab] = useState<TripTab>('Overview')
   const [mobileMenu, setMobileMenu] = useState(false)
-  const [query, setQuery] = useState("")
-  const [category, setCategory] = useState("All ideas")
-  const [sortPopular, setSortPopular] = useState(true)
-  const [toast, setToast] = useState("")
-  const [aiPrompt, setAiPrompt] = useState("")
-  const [aiReady, setAiReady] = useState(false)
-  const [tripName, setTripName] = useState("")
-  const [destination, setDestination] = useState("")
-  const [tripBudget, setTripBudget] = useState("2400")
-  const [startDate, setStartDate] = useState("2027-06-12")
-  const [endDate, setEndDate] = useState("2027-06-14")
-  const [formError, setFormError] = useState("")
-  const [placeSearch, setPlaceSearch] = useState("")
-  const [daySelected, setDaySelected] = useState(1)
-  const [inviteCopied, setInviteCopied] = useState(false)
-  const [newActivityName, setNewActivityName] = useState("")
-  const [newActivityCost, setNewActivityCost] = useState("25")
+  const [dialog, setDialog] = useState<TripDialogState>()
+  const [notice, setNotice] = useState('')
+  const trip = records.find(record => record.recordId === selected) ?? records[0]
+  const selectedTrip = view === 'trip' ? trip : undefined
 
-  const scheduled = useMemo(() => trip.activities.filter(item => item.day), [trip.activities])
-  const estimatedSpend = scheduled.reduce((sum, item) => sum + item.cost, 0) * trip.members.length
-  const budgetPercent = trip.budget ? Math.round(estimatedSpend / trip.budget * 100) : 0
-  const tripDays = Math.max(1, Math.round((new Date(trip.endDate).getTime() - new Date(trip.startDate).getTime()) / 86400000) + 1)
-  const filteredActivities = useMemo(() => trip.activities.filter(item => (category === "All ideas" || item.category === category) && `${item.name} ${item.location}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sortPopular ? b.votes.length - a.votes.length : a.name.localeCompare(b.name)), [trip.activities, category, query, sortPopular])
-  const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600) }
-
-  const navigate = (nav: string) => {
-    setActiveNav(nav); setMobileMenu(false)
-    if (nav === "Overview") setActiveTab("Overview")
-    if (nav === "My trips") setActiveTab("Overview")
-    if (nav === "Explore") setActiveTab("Discover")
-    if (nav === "Settings") showToast("Account settings are ready to connect to DeepSpace authentication.")
+  function select(id: string) {
+    setSelected(id)
+    setView('trip')
+    setTab('Overview')
+    setMobileMenu(false)
+    setNotice('')
   }
-  const vote = (id: string) => setTrip(current => ({ ...current, activities: current.activities.map(item => item.id === id ? { ...item, votes: item.votes.includes("you") ? item.votes.filter(voter => voter !== "you") : [...item.votes, "you"] } : item) }))
-  const schedule = (id: string) => setTrip(current => ({ ...current, activities: current.activities.map(item => item.id === id ? { ...item, day: item.day ? undefined : daySelected, time: item.day ? undefined : "2:00 PM" } : item) }))
-  const addActivity = () => {
-    if (!newActivityName.trim()) return
-    setTrip(current => ({ ...current, activities: [...current.activities, { id: `new-${Date.now()}`, name: newActivityName.trim(), category: "Sightseeing", location: trip.destination, description: "A new idea for your group to explore together.", cost: Math.max(0, Number(newActivityCost) || 0), duration: "1 hour", votes: ["you"] }] }))
-    setNewActivityName(""); setNewActivityCost("25"); setShowAdd(false); showToast("Idea added to your group board")
-  }
-  const createTrip = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setFormError("")
-    if (!tripName.trim() || !destination.trim()) { setFormError("Add a trip name and destination to continue."); return }
-    if (new Date(endDate) < new Date(startDate)) { setFormError("Your end date must be on or after the start date."); return }
-    if (Number(tripBudget) < 0) { setFormError("Budget cannot be negative."); return }
-    setTrip({ ...initialTrip, id: `trip-${Date.now()}`, name: tripName.trim(), destination: destination.trim(), startDate, endDate, budget: Number(tripBudget), activities: [], image: initialTrip.image })
-    setTripName(""); setDestination(""); setShowCreate(false); setActiveTab("Overview"); showToast("Your new trip is ready to plan")
-  }
-  const addPlace = (place: typeof places[number]) => {
-    if (trip.activities.some(item => item.id === place.id)) { showToast("This idea is already on your board"); return }
-    setTrip(current => ({ ...current, activities: [...current.activities, { ...place, votes: ["you"], duration: "2 hours" }] })); showToast(`${place.name} added to suggestions`)
-  }
-  const filteredPlaces = places.filter(place => `${place.name} ${place.category} ${place.location}`.toLowerCase().includes(placeSearch.toLowerCase()))
 
-  const tabs: { label: TripTab; icon: typeof LayoutDashboard }[] = [{ label: "Overview", icon: LayoutDashboard }, { label: "Discover", icon: Compass }, { label: "Voting", icon: Vote }, { label: "Itinerary", icon: CalendarDays }, { label: "Budget", icon: BarChart3 }, { label: "AI planner", icon: Sparkles }]
-  const navItems = [{ label: "Overview", icon: LayoutDashboard }, { label: "My trips", icon: MapPin }, { label: "Explore", icon: Compass }]
-  const topRecommendations = [...trip.activities].sort((a, b) => b.votes.length - a.votes.length).slice(0, 3)
+  function create() {
+    setMobileMenu(false)
+    setDialog({ operation: 'create' })
+  }
 
-  if (showLanding) return <WayviaLanding onStart={() => setShowLanding(false)} />
+  function list() {
+    setView('list')
+    setMobileMenu(false)
+  }
 
-  return <div className="app-shell">
-    <aside className={`sidebar ${mobileMenu ? "mobile-open" : ""}`}>
-      <div className="sidebar-brand"><Brand /><button className="icon-button mobile-close" onClick={() => setMobileMenu(false)} aria-label="Close navigation"><X size={18} /></button></div>
-      <div className="workspace-picker"><span className="workspace-dot">M</span><span><b>Maya&apos;s space</b><small>Free workspace</small></span><ChevronDown size={15} /></div>
+  return <div className="app-shell" data-testid="app-navigation">
+    <aside className={mobileMenu ? 'sidebar mobile-open' : 'sidebar'}>
+      <div className="sidebar-brand">
+        <div className="brand"><span className="brand-mark"><Compass size={19} strokeWidth={1.8} /></span><span>Wayvia</span></div>
+        <button className="icon-button mobile-close" onClick={() => setMobileMenu(false)} aria-label="Close navigation"><X size={18} /></button>
+      </div>
+      <div className="workspace-picker"><AccountAvatar user={user} /><span><b>{accountName(user)}’s space</b><small>Personal workspace</small></span></div>
       <div className="nav-label">WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">{navItems.map(item => <button key={item.label} onClick={() => navigate(item.label)} className={activeNav === item.label ? "active" : ""}><item.icon size={17} /><span>{item.label}</span>{item.label === "My trips" && <span className="nav-count">3</span>}</button>)}</nav>
-      <div className="sidebar-section"><div className="nav-label">YOUR TRIPS <button aria-label="Create trip" onClick={() => setShowCreate(true)}><Plus size={14} /></button></div><button className="trip-nav active-trip" onClick={() => { setActiveTab("Overview"); setActiveNav("My trips") }}><span className="trip-nav-dot" />San Diego weekend<span className="trip-live" /></button><button className="trip-nav" onClick={() => showToast("Lisbon plans are coming soon.")}><span className="trip-nav-dot lavender" />Lisbon in spring</button><button className="trip-nav" onClick={() => showToast("Your saved trip ideas are ready.")}><span className="trip-nav-dot amber" />Cabin weekend</button></div>
-      <div className="sidebar-bottom"><button onClick={() => navigate("Settings")} className={activeNav === "Settings" ? "active" : ""}><Settings size={17} />Settings</button><button onClick={() => showToast("Help center is coming soon.")}><CircleHelp size={17} />Help & support</button><div className="profile-card"><span className="profile-avatar">JD</span><span><b>Jordan Davis</b><small>Personal account</small></span><MoreHorizontal size={17} /></div></div>
+      <nav className="side-nav" aria-label="Main navigation">
+        <button className={view === 'trip' && tab === 'Overview' ? 'active' : ''} onClick={() => { setView('trip'); setTab('Overview'); setMobileMenu(false) }}><LayoutDashboard size={17} /><span>Overview</span></button>
+        <button className={view === 'list' ? 'active' : ''} onClick={list}><MapPin size={17} /><span>My trips</span>{status === 'ready' && <span className="nav-count">{records.length}</span>}</button>
+        {trip && <button className={view === 'trip' && tab === 'Discover' ? 'active' : ''} onClick={() => { setView('trip'); setTab('Discover'); setMobileMenu(false) }}><Compass size={17} /><span>Explore</span></button>}
+      </nav>
+      <div className="sidebar-section">
+        <div className="nav-label">YOUR TRIPS <button aria-label="New trip" onClick={create} disabled={status !== 'ready'}><Plus size={14} /></button></div>
+        {records.map(record => <button key={record.recordId} className={selectedTrip?.recordId === record.recordId ? 'trip-nav active-trip' : 'trip-nav'}
+          aria-current={selectedTrip?.recordId === record.recordId ? 'true' : undefined} onClick={() => select(record.recordId)}>
+          <span className="trip-nav-dot" /><span className="trip-nav-name">{record.data.title}</span>
+        </button>)}
+        {status === 'ready' && !records.length && <p className="sidebar-empty">No trips yet</p>}
+      </div>
+      <div className="sidebar-bottom"><WayviaAccount user={user} sidebar /></div>
     </aside>
     {mobileMenu && <button className="mobile-scrim" onClick={() => setMobileMenu(false)} aria-label="Close navigation overlay" />}
 
     <main className="main-area">
-      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu-button" aria-label="Open navigation" onClick={() => setMobileMenu(true)}><Menu size={19} /></button><div className="breadcrumbs"><span>My trips</span><ChevronRight size={14} /><b>{trip.name}</b></div></div><div className="topbar-actions"><button className="topbar-help" onClick={() => showToast("Help center is coming soon.")}><CircleHelp size={16} /><span>Help</span></button><button className="profile-avatar top-avatar" aria-label="Account menu">JD</button></div></header>
+      <header className="topbar">
+        <div className="topbar-left">
+          <button className="icon-button mobile-menu-button" aria-label="Open navigation" onClick={() => setMobileMenu(true)}><Menu size={19} /></button>
+          <div className="breadcrumbs"><button className="text-link" onClick={list}>My trips</button>{selectedTrip && <><ChevronRight size={14} /><b>{selectedTrip.data.title}</b></>}</div>
+        </div>
+        <div className="topbar-actions"><WayviaAccount user={user} /></div>
+      </header>
       <div className="content-wrap">
-        <section className="trip-hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(8,13,25,.88) 0%, rgba(8,13,25,.56) 52%, rgba(8,13,25,.08) 100%), url('${trip.image}')` }}>
-          <div className="hero-topline"><span className="eyebrow"><span className="live-dot" />YOUR NEXT ADVENTURE</span><button className="hero-more" aria-label="Trip options" onClick={() => showToast("Trip settings are managed by your workspace owner.")}><MoreHorizontal size={20} /></button></div>
-          <div className="trip-hero-content"><div className="trip-kicker"><MapPin size={14} />{trip.destination}</div><h1>{trip.name}</h1><p><CalendarDays size={15} />{new Date(trip.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – {new Date(trip.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}<span className="hero-separator" />{tripDays} days</p><div className="trip-hero-actions"><button className="button-primary" onClick={() => setActiveTab("Itinerary")}>View itinerary <ArrowRight size={15} /></button><button className="button-ghost" onClick={() => setShowInvite(true)}><Users size={15} /> Invite friends</button></div></div>
-          <div className="hero-members"><AvatarStack members={trip.members} /><span>{trip.members.length} planning together</span></div>
-        </section>
-
-        <section className="trip-toolbar"><div className="tab-list" role="tablist" aria-label="Trip workspace">{tabs.map(tab => <button role="tab" aria-selected={activeTab === tab.label} onClick={() => setActiveTab(tab.label)} key={tab.label} className={activeTab === tab.label ? "selected" : ""}><tab.icon size={15} /><span>{tab.label}</span></button>)}</div><button className="share-button" onClick={() => setShowInvite(true)}><Users size={15} /><span>Share trip</span></button></section>
-
-        <div className="page-heading"><div><div className="overline">{new Date(`${trip.startDate}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).toUpperCase()} <span className="heading-line" />{trip.destination.split(",")[0].toUpperCase()}</div><h2>{activeTab === "Overview" ? "A little sunshine, together." : activeTab === "AI planner" ? "Your travel sidekick." : activeTab === "Discover" ? "Find your kind of place." : activeTab === "Voting" ? "Make the call, together." : activeTab === "Itinerary" ? "The shape of your days." : "Keep the big picture."}</h2><p>{activeTab === "Overview" ? "A shared space for the good ideas and the even better memories." : `Everything your group needs for ${trip.destination.split(",")[0]}.`}</p></div><button className="button-outline add-idea" onClick={() => setShowAdd(true)}><Plus size={16} />Add an idea</button></div>
-
-        {activeTab === "Overview" && <>
-          <section className="metrics-grid" aria-label="Trip summary"><article className="metric-card"><span className="metric-icon violet"><CalendarDays size={17} /></span><span className="metric-label">DAYS TO GO</span><strong>{Math.max(0, Math.ceil((new Date(`${trip.startDate}T12:00:00`).getTime() - Date.now()) / 86400000))}</strong><small>Getting closer</small></article><article className="metric-card"><span className="metric-icon teal"><ListChecks size={17} /></span><span className="metric-label">ON THE ITINERARY</span><strong>{scheduled.length}<small className="metric-unit"> activities</small></strong><small>Across {tripDays} days</small></article><article className="metric-card"><span className="metric-icon amber"><DollarSign size={17} /></span><span className="metric-label">ESTIMATED TOTAL</span><strong>{money(estimatedSpend)}</strong><small>of {money(trip.budget)} budget</small></article><article className="metric-card members-metric"><span className="metric-icon rose"><Users size={17} /></span><span className="metric-label">YOUR CREW</span><div className="metric-member-row"><AvatarStack members={trip.members} size="small" /><strong>{trip.members.length}<small className="metric-unit"> people</small></strong></div><button className="text-link" onClick={() => setShowInvite(true)}>Invite someone <ArrowRight size={13} /></button></article></section>
-          <section className="overview-grid"><div className="panel itinerary-panel"><div className="panel-heading"><div><span className="section-kicker">THE PLAN SO FAR</span><h3>Coming up</h3></div><button className="text-link" onClick={() => setActiveTab("Itinerary")}>Full itinerary <ArrowRight size={14} /></button></div>{scheduled.slice(0, 3).map((item, index) => <div className="upcoming-row" key={item.id}><div className="timeline-rail"><span className="timeline-dot" />{index < 2 && <span className="timeline-stem" />}</div><div className="upcoming-time">{item.time}</div><div className="upcoming-info"><b>{item.name}</b><span><MapPin size={12} />{item.location}</span></div><span className="tag muted-tag">{item.category}</span></div>)}<button className="add-row" onClick={() => setShowAdd(true)}><Plus size={15} /> Add something to the plan</button></div>
-          <div className="overview-right"><div className="panel weather-card"><div className="weather-top"><div><span className="section-kicker">A LITTLE LOCAL FORECAST</span><h3>San Diego weather</h3></div><CloudSun size={22} className="weather-icon" /></div><div className="weather-main"><strong>{weather.temperature}°</strong><div><b>{weather.condition}</b><span>Feels like {weather.feelsLike}°</span></div></div><div className="weather-details"><span><Sun size={14} /> Humidity <b>{weather.humidity}%</b></span><span><ArrowDownUp size={14} /> Wind <b>{weather.wind} km/h</b></span></div><p className="weather-note">A lovely day for the coast. Pack a light layer for sunset.</p><span className="weather-updated">{weather.updatedAt}</span></div><div className="panel vote-picks"><div className="panel-heading compact"><div><span className="section-kicker">GROUP FAVORITES</span><h3>Getting the love</h3></div><button className="icon-button tiny" aria-label="View voting" onClick={() => setActiveTab("Voting")}><ArrowUpRight size={16} /></button></div>{topRecommendations.slice(0, 2).map((item, index) => <button className="favorite-row" key={item.id} onClick={() => setActiveTab("Voting")}><span className={`rank rank-${index + 1}`}>0{index + 1}</span><span><b>{item.name}</b><small>{item.votes.length} votes · {item.category}</small></span><ArrowRight size={15} /></button>)}</div></div></section>
-        </>}
-
-        {activeTab === "Voting" && <section className="tab-content"><div className="board-toolbar"><div className="filter-pills">{["All ideas", "Outdoors", "Food & drink", "Culture", "Sightseeing"].map(item => <button key={item} className={category === item ? "filter-active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div><button className="sort-button" onClick={() => setSortPopular(value => !value)}><ArrowDownUp size={14} />{sortPopular ? "Most popular" : "Name"}<ChevronDown size={14} /></button></div><div className="activity-list">{filteredActivities.map(item => <ActivityCard key={item.id} activity={item} trip={trip} onVote={vote} onSchedule={schedule} />)}{filteredActivities.length === 0 && <div className="empty-state"><Lightbulb size={24} /><b>No ideas in this view</b><span>Try another filter or add the first idea.</span><button className="button-primary" onClick={() => setShowAdd(true)}>Add an idea <Plus size={14} /></button></div>}</div></section>}
-
-        {activeTab === "Discover" && <section className="tab-content"><div className="discover-search"><div className="search-field"><Search size={17} /><input value={placeSearch} onChange={event => setPlaceSearch(event.target.value)} onKeyDown={event => event.key === "Enter" && showToast("Showing sample places near San Diego.")} placeholder="Try “ocean views” or “local coffee”" aria-label="Search San Diego places" /></div><button className="button-primary" onClick={() => showToast("Showing sample places near San Diego.")}>Search places <ArrowRight size={15} /></button></div><div className="sample-note"><Sparkles size={14} />Sample places for your preview. Search is ready to connect to your places service.</div><div className="place-grid">{filteredPlaces.map(place => <article className="place-card" key={place.id}><div className="place-image-wrap">{place.image ? <img src={place.image} alt="" /> : <div className="place-fallback"><MapPin /></div>}<span className="place-type">{place.category}</span></div><div className="place-card-body"><div className="place-title-row"><h3>{place.name}</h3>{place.rating && <span className="place-rating">★ {place.rating}</span>}</div><p className="muted"><MapPin size={13} />{place.location}</p><p>{place.description}</p><div className="place-card-foot"><span>{money(place.cost)} <small>est. / person</small></span><button className="button-outline small-button" onClick={() => addPlace(place)}><Plus size={14} /> Add idea</button></div></div></article>)}</div>{filteredPlaces.length === 0 && <div className="empty-state"><Search size={24} /><b>No places found</b><span>Try a different search to explore more.</span></div>}</section>}
-
-        {activeTab === "Itinerary" && <section className="tab-content itinerary-view"><div className="itinerary-head"><div><span className="section-kicker">YOUR DAYS, TAKING SHAPE</span><h3>{tripDays} days in {trip.destination.split(",")[0]}</h3></div><button className="button-outline" onClick={() => setShowAdd(true)}><Plus size={15} /> Add activity</button></div><div className="day-tabs">{Array.from({ length: tripDays }, (_, i) => <button key={i} onClick={() => setDaySelected(i + 1)} className={daySelected === i + 1 ? "day-active" : ""}><span>DAY 0{i + 1}</span><b>{dayLabel(i + 1, trip.startDate)}</b><small>{trip.activities.filter(item => item.day === i + 1).length} plans</small></button>)}</div><div className="day-summary"><div><CalendarDays size={15} />{new Date(new Date(`${trip.startDate}T12:00:00`).getTime() + (daySelected - 1) * 86400000).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })}</div><span>{trip.activities.filter(item => item.day === daySelected).length} planned · {money(trip.activities.filter(item => item.day === daySelected).reduce((sum, item) => sum + item.cost, 0))} per person</span></div><div className="timeline-list">{trip.activities.filter(item => item.day === daySelected).sort((a, b) => (a.time ?? "").localeCompare(b.time ?? "")).map(item => <div className="timeline-activity" key={item.id}><div className="timeline-time">{item.time}</div><div className="timeline-track"><span /><i /></div><article className="timeline-card"><div><span className="tag">{item.category}</span><h3>{item.name}</h3><p><MapPin size={13} />{item.location}</p></div><div className="timeline-cost"><b>{money(item.cost)}</b><span>{item.duration}</span><button className="text-link remove-link" onClick={() => setTrip(current => ({ ...current, activities: current.activities.map(activity => activity.id === item.id ? { ...activity, day: undefined, time: undefined } : activity) }))}>Remove</button></div></article></div>)}{trip.activities.filter(item => item.day === daySelected).length === 0 && <div className="empty-state"><CalendarDays size={24} /><b>A day full of possibility</b><span>Add an idea from voting to bring this day to life.</span><button className="button-outline" onClick={() => setActiveTab("Voting")}>Browse ideas <ArrowRight size={14} /></button></div>}</div><div className="unscheduled"><div><span className="section-kicker">ON THE IDEA BOARD</span><h3>Not scheduled yet</h3></div>{trip.activities.filter(item => !item.day).map(item => <div className="unscheduled-row" key={item.id}><span><b>{item.name}</b><small>{item.category} · {money(item.cost)} / person</small></span><button className="button-outline small-button" onClick={() => schedule(item.id)}><Plus size={14} /> Add to day {daySelected}</button></div>)}</div></section>}
-
-        {activeTab === "Budget" && <section className="tab-content budget-view"><div className="budget-top-grid"><article className="panel budget-total"><div className="panel-heading"><div><span className="section-kicker">THE BIG PICTURE</span><h3>Trip budget</h3></div><button className="text-link" onClick={() => { const next = window.prompt("Set your total trip budget", String(trip.budget)); if (next !== null && Number(next) >= 0) setTrip(current => ({ ...current, budget: Number(next) })) }}>Edit budget <ArrowUpRight size={14} /></button></div><div className="budget-numbers"><div><span>Planned spend</span><strong>{money(estimatedSpend)}</strong><small>Estimated, based on scheduled activities</small></div><BudgetRing percent={budgetPercent} /></div><div className="budget-progress"><span style={{ width: `${Math.min(budgetPercent, 100)}%` }} /></div><div className="budget-remain"><span>{budgetPercent > 100 ? "Over budget" : "Remaining"}</span><b className={budgetPercent > 100 ? "danger-text" : ""}>{money(trip.budget - estimatedSpend)}</b></div></article><article className="panel per-person"><span className="metric-icon violet"><Users size={17} /></span><span className="section-kicker">SPLIT THE ESTIMATE</span><h3>Per traveler</h3><strong>{money(trip.members.length ? estimatedSpend / trip.members.length : estimatedSpend)}</strong><p>Based on {trip.members.length} travelers and planned activity estimates.</p><span className="estimate-note">Planning estimate · not actual expenses</span></article></div><article className="panel breakdown-panel"><div className="panel-heading"><div><span className="section-kicker">WHERE IT GOES</span><h3>Spend by category</h3></div><span className="estimate-note">Scheduled activities only</span></div>{["Food & drink", "Transport", "Outdoors", "Sightseeing", "Culture"].map((item, index) => { const total = scheduled.filter(activity => activity.category === item).reduce((sum, activity) => sum + activity.cost * trip.members.length, 0); const colors = ["#a89af5", "#83cbb6", "#e9bd78", "#84a8e8", "#e28c9c"]; return <div className="category-row" key={item}><span className="category-name"><i style={{ background: colors[index] }} />{item}</span><div className="category-bar"><span style={{ width: `${estimatedSpend ? Math.max(2, total / estimatedSpend * 100) : 0}%`, background: colors[index] }} /></div><b>{money(total)}</b></div> })}<div className="budget-disclaimer">Accommodation, travel, and actual expenses can be added as your plans come together.</div></article></section>}
-
-        {activeTab === "AI planner" && <section className="tab-content ai-view"><div className="ai-context"><div className="ai-orb"><Sparkles size={25} /></div><div><span className="section-kicker">YOUR TRIP, IN CONTEXT</span><h3>A little inspiration goes a long way.</h3><p>Ideas for {trip.destination.split(",")[0]} · {trip.interests.join(" · ")} · {money(trip.budget)} group budget</p></div></div><div className="ai-workspace"><div className="ai-empty"><div className="ai-sparkle"><Sparkles size={18} /></div><h3>{aiReady ? "A few ideas to get you started." : "What should we dream up?"}</h3><p>{aiReady ? "Preview recommendations based on your trip context. Estimates are for planning only." : "Tell Wayvia what kind of day your group is in the mood for."}</p></div><div className="prompt-chips">{["Find hidden gems near us", "Plan a budget-friendly day", "Scenic outdoor activities", "Rainy day ideas"].map(prompt => <button key={prompt} onClick={() => setAiPrompt(prompt)}>{prompt}</button>)}</div>{aiReady && <div className="recommendations">{[{ title: "Sunrise at Mount Soledad", category: "Outdoors", description: "Start the morning with panoramic coastline views before the crowds arrive.", cost: 0, duration: "1 hour" }, { title: "Coffee & pastry crawl", category: "Food & drink", description: "Pick a neighborhood and make a relaxed morning of independent cafes.", cost: 22, duration: "2 hours" }].map(item => <article className="recommendation-card" key={item.title}><span className="tag">{item.category}</span><h4>{item.title}</h4><p>{item.description}</p><div><span>{item.duration} · {money(item.cost)} / person</span><button className="button-outline small-button" onClick={() => { setTrip(current => ({ ...current, activities: [...current.activities, { id: `rec-${Date.now()}`, name: item.title, category: item.category as ActivityCategory, location: trip.destination, description: item.description, cost: item.cost, duration: item.duration, votes: ["you"] }] })); showToast("Added to your ideas") }}><Plus size={13} /> Add to ideas</button></div></article>)}</div>}<form className="ai-input" onSubmit={event => { event.preventDefault(); if (aiPrompt.trim()) setAiReady(true) }}><input value={aiPrompt} onChange={event => setAiPrompt(event.target.value)} placeholder="Ask for ideas for your trip..." aria-label="Ask the AI planner for ideas" /><button aria-label="Generate sample ideas" type="submit" disabled={!aiPrompt.trim()}><Send size={16} /></button></form><p className="ai-disclaimer"><Sparkles size={12} />Sample recommendations only. AI results and costs are estimates to verify.</p></div></section>}
-
-        <footer className="page-footer"><span>MADE FOR THE MOMENTS IN BETWEEN</span><span>WAYVIA <span className="footer-dot">·</span> YOUR JOURNEY. OUR WAY.</span></footer>
+        {status === 'loading' && <div className="panel empty-state" role="status">Loading your trips…</div>}
+        {status === 'error' && <div className="panel empty-state" role="alert">
+          <b>Could not load your trips</b><button className="button-outline" onClick={() => window.location.reload()}>Reload workspace</button>
+        </div>}
+        {status === 'ready' && (selectedTrip
+          ? <TripWorkspace key={selectedTrip.recordId} trip={selectedTrip} user={user} tab={tab} setTab={setTab}
+            edit={operation => setDialog({ operation, trip: selectedTrip })} />
+          : <TripList trips={records} create={create} select={select} />)}
+        <footer className="page-footer"><span>WAYVIA · YOUR JOURNEY. OUR WAY.</span></footer>
       </div>
     </main>
 
-    {showCreate && <Modal title="Start a new adventure" onClose={() => setShowCreate(false)}><form className="dialog-form" onSubmit={createTrip}><p className="dialog-intro">A great trip starts with a shared idea. You can fill in the details as you go.</p><label>Trip name<input value={tripName} onChange={event => setTripName(event.target.value)} placeholder="e.g. A week in Portugal" required /></label><label>Destination<input value={destination} onChange={event => setDestination(event.target.value)} placeholder="City, region, or country" required /></label><div className="form-two"><label>Start date<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>End date<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div><label>Estimated group budget<input type="number" min="0" value={tripBudget} onChange={event => setTripBudget(event.target.value)} /></label>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="modal-actions"><button type="button" className="button-outline" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="button-primary">Create trip <ArrowRight size={15} /></button></div></form></Modal>}
-    {showAdd && <Modal title="Add an idea" onClose={() => setShowAdd(false)}><div className="dialog-form"><p className="dialog-intro">Drop a place or activity on the board and let everyone weigh in.</p><label>Activity name<input autoFocus value={newActivityName} onChange={event => setNewActivityName(event.target.value)} placeholder="What should you do together?" onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); addActivity() } }} /></label><label>Estimated cost per person<input type="number" min="0" value={newActivityCost} onChange={event => setNewActivityCost(event.target.value)} /></label><div className="modal-actions"><button className="button-outline" onClick={() => setShowAdd(false)}>Cancel</button><button className="button-primary" onClick={addActivity} disabled={!newActivityName.trim()}><Plus size={15} /> Add to ideas</button></div></div></Modal>}
-    {showInvite && <Modal title="Bring your people along" onClose={() => setShowInvite(false)}><div className="invite-content"><p className="dialog-intro">Trips are better when everyone gets a say. Share this invite with your crew.</p><div className="invite-link"><span>wayvia.app/join/sandiego-weekend</span><button className="button-outline small-button" onClick={() => { void navigator.clipboard?.writeText("https://wayvia.app/join/sandiego-weekend"); setInviteCopied(true); showToast("Invite link copied") }}>{inviteCopied ? <Check size={14} /> : <Copy size={14} />}{inviteCopied ? "Copied" : "Copy link"}</button></div><span className="section-kicker member-list-label">PLANNING TOGETHER · {trip.members.length}</span>{trip.members.map(member => <div className="invite-member" key={member.id}><span className="avatar" style={{ background: member.color }}>{member.initials}</span><span><b>{member.name}</b><small>{member.id === "you" ? "jordan@example.com" : "Joined the trip"}</small></span><span className="member-role">{member.role}</span></div>)}<p className="permission-note">Invitation access and membership will be managed by your connected DeepSpace workspace.</p></div></Modal>}
-    {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
+    {dialog && <TripDialog state={dialog} close={() => setDialog(undefined)} saved={id => {
+      setDialog(undefined)
+      if (dialog.operation === 'create') select(id)
+      if (dialog.operation === 'delete') setSelected(undefined)
+      setNotice({ create: 'Trip created.', edit: 'Trip details saved.', budget: 'Group budget saved.', delete: 'Trip deleted.' }[dialog.operation])
+    }} />}
+    {notice && <div className="toast" role="status">{notice}<button className="icon-button" aria-label="Dismiss message" onClick={() => setNotice('')}><X size={15} /></button></div>}
   </div>
+}
+
+function TripList({ trips, create, select }: { trips: SavedTrip[]; create: () => void; select: (id: string) => void }) {
+  if (!trips.length) return <section className="trip-hero first-trip neutral-cover">
+    <Compass size={42} aria-hidden="true" />
+    <h1>Where to next?</h1>
+    <p>Create your first trip to keep your dates, destination, and budget in one place.</p>
+    <button className="button-primary" onClick={create}><Plus size={16} /> Create your first trip</button>
+  </section>
+
+  return <section>
+    <div className="page-heading"><div><h1>My trips</h1></div><button className="button-primary" onClick={create}><Plus size={16} /> Create trip</button></div>
+    <div className="saved-trip-grid">{trips.map(trip => <button className="panel saved-trip" key={trip.recordId} onClick={() => select(trip.recordId)}>
+      <MapPin size={18} /><span><strong>{trip.data.title}</strong><small>{trip.data.destination}</small><small>{formatTripDate(trip.data.startDate, shortDate)} – {formatTripDate(trip.data.endDate, { ...shortDate, year: 'numeric' })}</small></span><ArrowRight size={16} />
+    </button>)}</div>
+  </section>
+}
+
+function TripWorkspace({ trip, user, tab, setTab, edit }: {
+  trip: SavedTrip; user: UserProfile; tab: TripTab; setTab: (tab: TripTab) => void
+  edit: (operation: 'edit' | 'budget' | 'delete') => void
+}) {
+  const [invite, setInvite] = useState(false)
+  const { data } = trip
+  const owner = trip.createdBy === user.id
+  const cover = coverImage(data.image)
+  const days = tripDays(data.startDate, data.endDate)
+  const members = new Set([trip.createdBy, ...(Array.isArray(data.collaborators) ? data.collaborators : [])]).size
+
+  return <>
+    <section className="trip-hero neutral-cover">
+      {cover && <img key={cover} className="trip-cover" src={cover} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true }} />}
+      <div className="hero-topline">
+        <span className="eyebrow"><span className="live-dot" />TRIP WORKSPACE</span>
+        {owner && <DropdownMenu>
+          <DropdownMenuTrigger render={<button className="hero-more" aria-label="Trip options" />}><MoreHorizontal size={20} /></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="wayvia-account-popup">
+            <DropdownMenuItem onClick={() => edit('edit')}>Edit trip details</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => edit('delete')}>Delete trip</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>}
+      </div>
+      <div className="trip-hero-content">
+        <div className="trip-kicker"><MapPin size={14} />{data.destination}</div>
+        <h1>{data.title}</h1>
+        <p><CalendarDays size={15} /> {formatTripDate(data.startDate, shortDate)} – {formatTripDate(data.endDate, { ...shortDate, year: 'numeric' })}
+          {days >= 1 && <><span className="hero-separator" />{days} {days === 1 ? 'day' : 'days'}</>}</p>
+        <div className="trip-hero-actions">
+          <button className="button-primary" onClick={() => setTab('Itinerary')}>View itinerary <ArrowRight size={15} /></button>
+          <button className="button-ghost" onClick={() => setInvite(true)}><Users size={15} /> Invite friends</button>
+        </div>
+      </div>
+      <div className="hero-members"><AccountAvatar user={user} /><span>{members} {members === 1 ? 'traveler' : 'travelers'}</span></div>
+    </section>
+    <section className="trip-toolbar">
+      <div className="tab-list" role="tablist" aria-label="Trip workspace">{tabs.map(({ label, icon: Icon }) =>
+        <button role="tab" aria-controls="trip-panel" aria-selected={tab === label} onClick={() => setTab(label)} key={label}
+          className={tab === label ? 'selected' : ''}><Icon size={15} /><span>{label}</span></button>)}</div>
+    </section>
+    <div className="page-heading"><div><div className="overline">{formatTripDate(data.startDate, longDate)} <span className="heading-line" />{data.destination}</div>
+      <h2>{tab === 'Overview' ? 'Your trip at a glance' : tab}</h2>
+      {tab === 'Overview' && data.description && <p>{data.description}</p>}
+      {tab === 'Overview' && !!data.interests?.length && <p>{data.interests.join(' · ')}</p>}
+    </div></div>
+    <div role="tabpanel" id="trip-panel" aria-label={tab}>
+      {tab === 'Overview' && <Overview trip={data} members={members} days={days} showItinerary={() => setTab('Itinerary')} />}
+      {tab === 'Discover' && <EmptyPanel icon={Compass} title="Destination discovery is unavailable" text={'Place search for ' + data.destination + ' is not connected yet.'} />}
+      {tab === 'Voting' && <EmptyPanel icon={Lightbulb} title="No ideas to vote on" text="The group idea board and voting are not available yet." />}
+      {tab === 'Itinerary' && <Itinerary key={data.startDate + data.endDate} trip={data} days={days} />}
+      {tab === 'Budget' && <Budget amount={data.budget ?? 0} edit={owner ? () => edit('budget') : undefined} />}
+      {tab === 'AI planner' && <EmptyPanel icon={Sparkles} title="AI planner is unavailable" text="Travel recommendations are not connected yet." />}
+    </div>
+    {invite && <WayviaDialog title="Invite friends" close={() => setInvite(false)}>
+      <div className="invite-content"><p className="dialog-intro">Invitations are not available yet.</p></div>
+    </WayviaDialog>}
+  </>
+}
+
+function Overview({ trip, days, members, showItinerary }: { trip: TripRecord; days: number; members: number; showItinerary: () => void }) {
+  const now = new Date()
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  const countdown = Math.max(0, (Date.parse(trip.startDate) - today) / DAY_MS)
+  const metrics = [
+    { label: 'DAYS TO GO', value: Number.isFinite(countdown) ? countdown : '—', note: 'Until departure', icon: CalendarDays, color: 'violet' },
+    { label: 'ON THE ITINERARY', value: 0, note: days >= 1 ? 'Across ' + days + ' days' : 'No dates available', icon: ListChecks, color: 'teal' },
+    { label: 'GROUP BUDGET', value: money(trip.budget ?? 0), note: 'Estimated total', icon: DollarSign, color: 'amber' },
+    { label: 'YOUR CREW', value: members, note: members === 1 ? 'Traveler' : 'Travelers', icon: Users, color: 'rose' },
+  ]
+
+  return <>
+    <section className="metrics-grid" aria-label="Trip summary">{metrics.map(({ label, value, note, icon: Icon, color }) => <article className="metric-card" key={label}>
+      <span className={'metric-icon ' + color}><Icon size={17} /></span><span className="metric-label">{label}</span><strong>{value}</strong><small>{note}</small>
+    </article>)}</section>
+    <section className="overview-grid">
+      <div className="panel itinerary-panel"><div className="panel-heading"><h3>Coming up</h3><button className="text-link" onClick={showItinerary}>Full itinerary <ArrowRight size={14} /></button></div>
+        <EmptyPanel icon={CalendarDays} title="No activities scheduled" />
+      </div>
+      <div className="overview-right">
+        <div className="panel weather-card"><div className="weather-top"><h3>Destination weather</h3><CloudSun size={22} className="weather-icon" /></div><p className="weather-note">Live weather is unavailable.</p></div>
+        <div className="panel vote-picks"><div className="panel-heading"><h3>Group favorites</h3></div><p className="weather-note">No ideas have been voted on.</p></div>
+      </div>
+    </section>
+  </>
+}
+
+function Itinerary({ trip, days }: { trip: TripRecord; days: number }) {
+  const [day, setDay] = useState(0)
+  const count = days >= 1 ? Math.min(days, MAX_TRIP_DAYS) : 0
+  return <section className="tab-content itinerary-view">
+    <div className="itinerary-head"><h3>{trip.destination}</h3></div>
+    <div className="day-tabs">{Array.from({ length: count }, (_, index) => <button key={index} onClick={() => setDay(index)} className={index === day ? 'day-active' : ''}>
+      <span>DAY {index + 1}</span><b>{formatTripDate(trip.startDate, { ...shortDate, weekday: 'long' }, index)}</b>
+    </button>)}</div>
+    {count > 0 && <div className="day-summary"><div><CalendarDays size={15} />{formatTripDate(trip.startDate, longDate, day)}</div></div>}
+    <EmptyPanel icon={CalendarDays} title="No activities scheduled" />
+  </section>
+}
+
+function Budget({ amount, edit }: { amount: number; edit?: () => void }) {
+  return <section className="tab-content budget-view">
+    <div className="budget-top-grid"><article className="panel budget-total">
+      <div className="panel-heading"><h3>Trip budget</h3>{edit && <button className="text-link" onClick={edit}>Edit budget <ArrowRight size={14} /></button>}</div>
+      <div className="budget-numbers"><div><span>Estimated group budget</span><strong>{money(amount)}</strong></div>
+        <div className="budget-ring"><div><strong>0%</strong><span>planned</span></div></div>
+      </div>
+      <div className="budget-progress" /><div className="budget-remain"><span>Remaining</span><b>{money(amount)}</b></div>
+    </article><article className="panel per-person"><span className="metric-icon violet"><Users size={17} /></span><h3>Per traveler</h3><p>No activities have been scheduled to estimate costs.</p></article></div>
+  </section>
+}
+
+function EmptyPanel({ icon: Icon, title, text }: { icon: typeof Compass; title: string; text?: string }) {
+  return <div className="empty-state"><Icon size={24} /><b>{title}</b>{text && <span>{text}</span>}</div>
 }

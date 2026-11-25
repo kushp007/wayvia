@@ -16,7 +16,7 @@ function SignedOutPanel() {
   const [showAuthModal, setShowAuthModal] = useState(false)
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2 bg-[#080D19] text-white">
+    <div data-testid="app-navigation" className="min-h-screen grid lg:grid-cols-2 bg-[#080D19] text-white">
 
       {/* Left — Cinematic travel photography */}
       <div className="relative hidden lg:flex flex-col justify-between overflow-hidden p-12">
@@ -89,6 +89,7 @@ function SignedOutPanel() {
           </p>
 
           <button
+            data-testid="nav-sign-in-button"
             onClick={() => setShowAuthModal(true)}
             className="mt-9 flex w-full items-center justify-center gap-3 rounded-xl bg-indigo-500 px-6 py-4 font-semibold text-white transition hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-300"
           >

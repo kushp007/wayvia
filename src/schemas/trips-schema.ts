@@ -51,10 +51,16 @@ export const tripsSchema: CollectionSchema = {
       name: 'image',
       storage: 'text',
       interpretation: 'plain',
-      default: '/san-diego-coast.png',
+      default: '',
     },
     {
       name: 'collaborators',
+      storage: 'text',
+      interpretation: { kind: 'json' },
+      default: [],
+    },
+    {
+      name: 'interests',
       storage: 'text',
       interpretation: { kind: 'json' },
       default: [],
@@ -79,7 +85,7 @@ export const tripsSchema: CollectionSchema = {
     },
 
     viewer: {
-      read: false,
+      read: 'collaborator',
       create: false,
       update: false,
       delete: false,
@@ -87,16 +93,16 @@ export const tripsSchema: CollectionSchema = {
 
     member: {
       read: 'collaborator',
-      create: true,
-      update: 'own',
-      delete: 'own',
+      create: false,
+      update: false,
+      delete: false,
     },
 
     admin: {
       read: 'collaborator',
-      create: true,
-      update: 'own',
-      delete: 'own',
+      create: false,
+      update: false,
+      delete: false,
     },
   },
 }
