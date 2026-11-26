@@ -16,6 +16,7 @@
  * cleanup. No need to manage browser contexts manually.
  */
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
+import { verifySharedTrip } from './shared-trip'
 
 // A machine that has never created test accounts is the normal state of a
 // fresh checkout, and there `users()` throws — turning "you have no pool yet"
@@ -182,7 +183,7 @@ test('trips persist across reloads and stay private to their owner', async ({ us
   await sidebar.getByRole('button', { name: first }).click()
   await expect(page.getByText('A weekend in Manhattan')).toBeVisible()
   await page.getByRole('tab', { name: 'Budget' }).click()
-  await expect(page.locator('.budget-numbers')).toContainText('$975.5')
+  await expect(page.locator('.budget-numbers')).toContainText('$975.50')
 
   await deleteSelected()
   await expect(sidebar.getByRole('button', { name: first })).toHaveCount(0)
@@ -194,4 +195,9 @@ test('trips persist across reloads and stay private to their owner', async ({ us
   await page.getByRole('menuitem', { name: 'Sign out' }).click()
   await expect(page.getByTestId('nav-sign-in-button')).toBeVisible()
   await expect(page.getByTestId('nav-user-name')).toHaveCount(0)
+})
+
+test('trip members see shared plans and votes live, then lose access on removal', async ({ users }) => {
+  const [owner, friend] = await users(2)
+  await verifySharedTrip(owner.page, friend.page)
 })

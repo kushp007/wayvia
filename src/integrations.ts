@@ -22,9 +22,12 @@
 
 export const integrations: Record<
   string,
-  { billing: 'developer' | 'user'; anonymous?: boolean }
+  { billing: 'developer' | 'user'; anonymous?: boolean; serverOnly?: boolean }
 > = {
   google: { billing: 'user' },
   composio: { billing: 'user' },
-  // openai: { billing: 'developer', anonymous: true },
+  serpapi: { billing: 'developer', serverOnly: true },
+  exa: { billing: 'developer', serverOnly: true },
+  openweathermap: { billing: 'developer', serverOnly: true },
+  openai: { billing: 'developer', serverOnly: true },
 }

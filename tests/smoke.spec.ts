@@ -57,6 +57,18 @@ test.describe('Smoke tests', () => {
     await expect(page.getByTestId('app-navigation')).toBeVisible({ timeout: 15000 })
   })
 
+  test('landing eyebrow clears the brand on desktop and mobile', async ({ page }) => {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 700 }, { width: 360, height: 560 }]) {
+      await page.setViewportSize(viewport)
+      await page.goto('/')
+      const brand = await page.getByRole('link', { name: 'Wayvia home', exact: true }).boundingBox()
+      const eyebrow = await page.getByText('GOOD PLANS BEGIN WITH YOUR PEOPLE').boundingBox()
+      expect(brand).not.toBeNull()
+      expect(eyebrow).not.toBeNull()
+      expect(eyebrow!.y - (brand!.y + brand!.height)).toBeGreaterThanOrEqual(20)
+    }
+  })
+
   test('sign-in button visible when logged out', async ({ page }) => {
     await page.goto('/home')
     await expect(page.getByTestId('nav-sign-in-button')).toBeVisible({ timeout: 15000 })

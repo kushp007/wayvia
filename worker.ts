@@ -25,7 +25,7 @@ import { buildTools } from './src/ai/tools.js'
 import { tasks as cronTasks, runTask as runCronTask } from './src/cron.js'
 import { runJob } from './src/jobs.js'
 import { schemas } from './src/schemas.js'
-import { registerActionRoutes } from './src/server/action-routes.js'
+import { ACTION_ROOM_URL, dispatchRoomAction, registerActionRoutes } from './src/server/action-routes.js'
 import {
   registerAuthAndIntegrationRoutes,
   registerPlatformProxyRoutes,
@@ -45,8 +45,21 @@ export const __DO_MANIFEST__ = [
 ] as const satisfies DOManifest
 
 export class AppRecordRoom extends RecordRoom<Env> {
+  private actionTail: Promise<unknown> = Promise.resolve()
+
   constructor(state: DurableObjectState, env: Env) {
     super(state, env, schemas, { ownerUserId: env.OWNER_USER_ID })
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    if (request.url !== ACTION_ROOM_URL || request.method !== 'POST') return super.fetch(request)
+    const envelope = await request.json<Parameters<typeof dispatchRoomAction>[0]>()
+    // Only the verified action route reaches this exact internal URL. Every
+    // trip mutation goes through this queue. Each command publishes one SDK
+    // record update, so other clients never observe partial trip changes.
+    const result = this.actionTail.then(() => dispatchRoomAction(envelope, this.env, input => super.fetch(input)))
+    this.actionTail = result.catch(() => undefined)
+    return result
   }
 }
 

@@ -1,6 +1,7 @@
 import { isAnonymousUserId, type ActionHandler, type ActionResult } from 'deepspace/worker'
 import type { Env } from '../../worker'
-import { TRIPS, tripBudget, tripDetails } from '../lib/trips'
+import { TRIPS, tripBudget, tripDetails, tripEdits, type TripRecord } from '../lib/trips'
+import { validSchedule } from '../lib/collaboration'
 
 const unavailable = { success: false, error: 'This trip is unavailable.' } as const
 
@@ -17,15 +18,27 @@ function tripAction(operation: 'create' | 'edit' | 'budget' | 'delete'): ActionH
     }
 
     const id = typeof params.recordId === 'string' ? params.recordId : ''
+    let trip: TripRecord | undefined
     if (operation !== 'create') {
       if (!id || id.length > 128) return unavailable
-      const result = await tools.get(TRIPS, id)
+      const result = await tools.get<TripRecord>(TRIPS, id)
       if (!result.success || result.data.record.createdBy !== userId) return unavailable
+      trip = result.data.record.data
       if (operation === 'delete') return mutationResult(await tools.remove(TRIPS, id))
     }
 
-    const parsed = (operation === 'budget' ? tripBudget : tripDetails).safeParse(params.details)
+    if (operation === 'budget') {
+      const parsed = tripBudget.safeParse(params.details)
+      if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+      return mutationResult(await tools.update(TRIPS, id, parsed.data))
+    }
+    const schema = operation === 'edit' ? tripEdits : tripDetails
+    const parsed = schema.safeParse(params.details)
     if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+    const { startDate, endDate } = parsed.data
+    if (trip?.activities?.some(item => !validSchedule(item.date, item.time, startDate, endDate))) {
+      return { success: false, error: 'Move or unschedule activities outside the new dates before saving.' }
+    }
     return mutationResult(operation === 'create'
       ? await tools.create(TRIPS, parsed.data)
       : await tools.update(TRIPS, id, parsed.data))

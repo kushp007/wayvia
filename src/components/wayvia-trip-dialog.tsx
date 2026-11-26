@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
 import { ArrowRight, X } from 'lucide-react'
-import { coverImage, tripBudget, tripDetails } from '@/lib/trips'
+import { tripBudget, tripDetails } from '@/lib/trips'
 import { saveTrip, type SavedTrip, type TripOperation } from '@/lib/trip-client'
 
 export type TripDialogState = { operation: 'create' } | { operation: Exclude<TripOperation, 'create'>; trip: SavedTrip }
@@ -46,7 +46,7 @@ export function TripDialog({ state, close, saved }: { state: TripDialogState; cl
     const budget = field('budget').trim() ? Number(field('budget')) : 0
     const parsed = showDetails ? tripDetails.safeParse({
       title: field('title'), destination: field('destination'), description: field('description'),
-      startDate: field('startDate'), endDate: field('endDate'), budget, image: field('image'),
+      startDate: field('startDate'), endDate: field('endDate'), budget, image: '',
       interests: field('interests').split(',').map(value => value.trim()).filter(Boolean),
     }) : tripBudget.safeParse({ budget })
 
@@ -79,7 +79,6 @@ export function TripDialog({ state, close, saved }: { state: TripDialogState; cl
           <label>End date<input type="date" name="endDate" defaultValue={data?.endDate} required /></label>
         </div>
         <label>Description <textarea name="description" defaultValue={data?.description} maxLength={1000} rows={2} /></label>
-        <label>Cover image URL <input name="image" type="url" defaultValue={coverImage(data?.image)} placeholder="https://" maxLength={2048} /></label>
         <label>Interests <input name="interests" defaultValue={data?.interests?.join(', ')} placeholder="Food, hiking, museums" maxLength={500} /></label>
       </>}
       {operation !== 'delete' && <label>Estimated group budget (USD)<input name="budget" type="number" min="0" max="1000000000" step="0.01" defaultValue={data?.budget ?? 0} required /></label>}

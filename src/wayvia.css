@@ -141,3 +141,59 @@ button:focus-visible, input:focus-visible { outline: 2px solid #9996ff; outline-
 .day-tabs button { flex-shrink:0; }
 .app-shell button:disabled, .wayvia-popup button:disabled { cursor:wait; opacity:.65; }
 .budget-ring { --progress:0%; }
+
+/* Shared trip workspace */
+.workspace-brand { color:inherit; text-decoration:none; }
+.workspace-brand:focus-visible, .wayvia-sort select:focus-visible, .wayvia-popup :is(input,select,textarea,button):focus-visible { outline:2px solid #aaa3ff; outline-offset:3px; }
+.wayvia-button-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.wayvia-activity .wayvia-button-row { margin-top:14px; }
+.wayvia-activity:not(:has(.activity-image)) { grid-template-columns:minmax(0,1fr) auto; }
+.wayvia-activity .activity-main { min-width:0; overflow-wrap:anywhere; }
+.wayvia-sort { display:flex; align-items:center; gap:7px; color:#a7b3cd; font-size:12px; }
+.wayvia-sort select, .dialog-form select, .invite-link input { color:#e9edfa; border:1px solid #34415b; border-radius:7px; padding:7px 9px; background:#10192a; min-width:0; }
+.invite-link input { flex:1; }
+.membership-confirm { padding:12px; margin-top:12px; border:1px solid #554456; border-radius:8px; }
+.membership-confirm p { margin:0 0 8px; }
+.wayvia-overview-list { list-style:none; margin:0; padding:0; }
+.wayvia-overview-list li { display:flex; gap:10px; align-items:center; padding:11px 0; border-top:1px solid #9aabc51e; }
+.wayvia-overview-list li > div { display:grid; gap:4px; }
+.wayvia-overview-list li > small:last-child { margin-left:auto; }
+.wayvia-overview-list small { color:#a7b3cd; font-size:11px; }
+.breakdown-panel { margin-top:14px; }
+.breakdown-panel .category-name i, .breakdown-panel .category-bar span { background:#958bf4; }
+.hero-members .avatar-stack, .metric-member-row .avatar-stack { display:flex; align-items:center; }
+.hero-members .avatar-stack > span + span, .metric-member-row .avatar-stack > span + span { margin-left:-8px; }
+.landing-hero { padding-top:108px; }
+@media (max-width:650px) {
+  .landing-hero { padding-top:92px; min-height:660px; height:auto; max-height:none; }
+  .landing-hero-content { margin-top:clamp(20px, 18vh, 140px); }
+  .wayvia-activity:has(.activity-image) .activity-image { width:100%; max-height:170px; object-fit:cover; }
+  .hero-members { max-width:calc(100% - 32px); }
+}
+
+/* Destination integrations */
+.travel-form { display:grid; grid-template-columns:minmax(0,1fr) minmax(140px,220px) auto; align-items:end; gap:12px; margin-bottom:20px; }
+.travel-form label { display:grid; gap:6px; color:#aab7d1; font-size:12px; }
+.travel-form :is(input,select) { width:100%; min-width:0; padding:10px 12px; color:#eef1ff; background:#111a2d; border:1px solid #354360; border-radius:8px; }
+.travel-form :is(input,select):focus-visible { outline:2px solid #aaa3ff; outline-offset:2px; }
+.travel-results { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:14px; margin-top:15px; }
+.travel-card { overflow:hidden; }
+.travel-card > div { padding:16px; overflow-wrap:anywhere; }
+.travel-card img { width:100%; height:150px; object-fit:cover; }
+.travel-card h3, .travel-planner h3 { font-size:16px; color:#f2f3ff; margin:0 0 8px; }
+.travel-card p, .travel-planner p, .travel-estimate { color:#aab7d1; margin:8px 0; font-size:12px; line-height:1.55; }
+.travel-card p svg { display:inline-block; vertical-align:middle; }
+.travel-card button { margin-top:6px; }
+.travel-planner { padding:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+.travel-temperature { display:flex; gap:9px; align-items:baseline; flex-wrap:wrap; margin:12px 0; }
+.travel-temperature strong { color:#eef1ff; font-size:23px; }
+.travel-temperature span { color:#b7c2d9; text-transform:capitalize; font-size:12px; }
+.travel-weather-values { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; }
+.travel-weather-values dt { color:#aab7d1; }
+.travel-weather-values dd { margin:3px 0 0; color:#eef1ff; }
+@media (max-width:640px) {
+  .travel-form { grid-template-columns:1fr; }
+  .travel-form button { justify-self:start; }
+}
+.cover-credit { margin:7px 2px 0; color:#aab7d1; font-size:11px; overflow-wrap:anywhere; }
+.cover-credit a { color:#c7c0ff; text-decoration:underline; text-underline-offset:2px; }

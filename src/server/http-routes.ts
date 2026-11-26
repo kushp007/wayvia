@@ -237,7 +237,8 @@ export function registerAuthAndIntegrationRoutes(app: Hono<AppContext>): void {
     // identifiers only, and own keys only for the config.
     const target = integrationPath(integrationName, c.req.param('endpoint'))
     if (!target) return c.json({ error: 'Unknown integration' }, 404)
-    const config = lookupOwn(integrations, integrationName)
+    const config = lookupOwn(integrations, integrationName.toLowerCase())
+    if (config?.serverOnly) return c.json({ error: 'Use the trip workspace to access this integration' }, 403)
     const billingMode = config?.billing ?? 'developer'
 
     // Sign-in is required unless the app opts this integration into anonymous

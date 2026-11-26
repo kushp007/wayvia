@@ -7,6 +7,9 @@ export const tripsSchema: CollectionSchema = {
   collaboratorsField: 'collaborators',
 
   columns: [
+    { name: 'coverAttribution', storage: 'text', interpretation: { kind: 'json' } },
+    { name: 'activities', storage: 'text', interpretation: { kind: 'json' }, default: [] },
+    { name: 'invitation', storage: 'text', interpretation: { kind: 'json' } },
     {
       name: 'title',
       storage: 'text',

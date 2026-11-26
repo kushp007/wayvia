@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { AuthGate, AuthOverlay } from 'deepspace'
 import { Compass, ArrowRight, ArrowLeft, Users, ShieldCheck } from 'lucide-react'
+import { rememberInvite } from '@/lib/trip-invites'
 
 export default function ProtectedLayout() {
   return (
@@ -90,7 +91,7 @@ function SignedOutPanel() {
 
           <button
             data-testid="nav-sign-in-button"
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => { rememberInvite(); setShowAuthModal(true) }}
             className="mt-9 flex w-full items-center justify-center gap-3 rounded-xl bg-indigo-500 px-6 py-4 font-semibold text-white transition hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-300"
           >
             Continue to Wayvia

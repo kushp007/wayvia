@@ -28,6 +28,7 @@
  */
 
 import type { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import {
   apiWorkerFetch,
   lookupOwn,
@@ -36,13 +37,20 @@ import {
 } from 'deepspace/worker'
 import type { ActionResult, ActionTools, VerifyResult } from 'deepspace/worker'
 import { actions } from '../actions/index.js'
+import { travelActions } from '../actions/travel.js'
+import { applyCommonsCover } from '../actions/collaboration.js'
+import { findCommonsCover } from '../actions/commons-cover.js'
+import { TRIPS, type TripRecord } from '../lib/trips.js'
 import { integrations } from '../integrations.js'
 import type { AppContext, Env } from '../../worker.js'
 
 type ResolveAuth = (req: Request, env: Env) => Promise<VerifyResult | null>
+export const ACTION_ROOM_URL = 'https://internal/internal/wayvia-actions'
+const activeCoverLookups = new Set<string>()
+const coverRate = new Map<string, { remaining: number; resets: number }>()
 
 export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth): void {
-  app.post('/api/actions/:name', async (c) => {
+  app.post('/api/actions/:name', bodyLimit({ maxSize: 16_384 }), async (c) => {
     const auth = await resolveAuth(c.req.raw, c.env)
     if (!auth) return c.json({ error: 'Unauthorized' }, 401)
     // `resolveAuth` may accept a cookie session, which carries no bearer token
@@ -61,16 +69,78 @@ export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: Resolve
     // Own keys only: `actions[name]` also finds `constructor` (Object), which
     // returns the handler argument, env secrets included, as the response.
     const action = lookupOwn(actions, name)
-    if (!action) return c.json({ error: 'Action not found' }, 404)
-    const params = await c.req.json<Record<string, unknown>>()
-    const tools = createActionTools(c.env, auth.userId, callerJwt)
-    const result = await action({ userId: auth.userId, params, tools, env: c.env, callerJwt })
-    return c.json(result as unknown as Record<string, unknown>)
+    if (!action && name !== 'cover-lookup') return c.json({ error: 'Action not found' }, 404)
+    const params = await c.req.json<unknown>().catch(() => null)
+    if (!params || typeof params !== 'object' || Array.isArray(params)) return c.json({ error: 'Invalid action input' }, 400)
+    const room = c.env.RECORD_ROOMS.get(c.env.RECORD_ROOMS.idFromName(`app:${c.env.DEEPSPACE_APP_ID}`))
+    const envelope = { name, params: params as Record<string, unknown>, userId: auth.userId, callerJwt }
+    // Read-only provider work runs outside the serialized trip mutation queue.
+    if (lookupOwn(travelActions, name)) return dispatchRoomAction(envelope, c.env, request => room.fetch(request))
+    const send = (input: ActionEnvelope) => room.fetch(new Request(ACTION_ROOM_URL, {
+      method: 'POST',
+      body: JSON.stringify(input),
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const cover = async (id: unknown, automatic: boolean) => {
+      const tools = createActionTools(c.env, auth.userId, callerJwt, request => room.fetch(request))
+      if (typeof id !== 'string' || id.length < 1 || id.length > 128) {
+        return Response.json({ success: false, error: 'This trip is unavailable.' })
+      }
+      const result = await tools.get<TripRecord>(TRIPS, id)
+      if (!result.success || result.data.record.createdBy !== auth.userId) {
+        return Response.json({ success: false, error: 'This trip is unavailable.' })
+      }
+      const { destination, image } = result.data.record.data
+      if (automatic && image) return Response.json({ success: true, data: { updated: false } })
+      const key = c.env.DEEPSPACE_APP_ID + ':' + id
+      const reply = (status: string) => Response.json({ success: true, data: { status } })
+      if (activeCoverLookups.has(key)) return reply('pending')
+      if (activeCoverLookups.size >= 32) return reply('busy')
+      const now = Date.now()
+      const rateKey = c.env.DEEPSPACE_APP_ID + ':' + auth.userId + ':' + (automatic ? 'auto' : 'manual')
+      let rate = coverRate.get(rateKey)
+      if (!rate || rate.resets <= now) {
+        rate = { remaining: automatic ? 8 : 5, resets: now + 60_000 }
+        coverRate.delete(rateKey)
+        coverRate.set(rateKey, rate)
+        if (coverRate.size > 512) coverRate.delete(coverRate.keys().next().value!)
+      }
+      if (rate.remaining <= 0) {
+        return Response.json({ success: true, data: { status: 'limited', retryAfter: Math.ceil((rate.resets - now) / 1000) } })
+      }
+      rate.remaining--
+      activeCoverLookups.add(key)
+      try {
+        const match = await findCommonsCover(destination)
+        if (match.status !== 'found') return reply(match.status)
+        return await send({ ...envelope, name: 'cover-apply', params: { recordId: id, destination, previousImage: image ?? '', cover: match.cover } })
+      } finally {
+        activeCoverLookups.delete(key)
+      }
+    }
+    if (name === 'cover-lookup') return cover(envelope.params.recordId, false)
+    const response = await send(envelope)
+    if (name === 'trip-create' && response.ok) {
+      c.executionCtx.waitUntil(response.clone().json<ActionResult<{ recordId: string }>>()
+        .then(result => result.success ? cover(result.data.recordId, true) : undefined)
+        .catch(() => undefined))
+    }
+    return response
   })
 }
 
-function createActionTools(env: Env, userId: string, callerJwt: string): ActionTools {
-  const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(`app:${env.DEEPSPACE_APP_ID}`))
+type ActionEnvelope = { name: string; userId: string; callerJwt: string; params: Record<string, unknown> }
+type RecordFetch = (request: Request) => Promise<Response>
+
+export async function dispatchRoomAction(envelope: ActionEnvelope, env: Env, fetchRecord: RecordFetch) {
+  const { name, params, userId, callerJwt } = envelope
+  const action = name === 'cover-apply' ? applyCommonsCover : lookupOwn(actions, name)
+  if (!action) return Response.json({ error: 'Action not found' }, { status: 404 })
+  const result = await action({ userId, params, tools: createActionTools(env, userId, callerJwt, fetchRecord), env, callerJwt })
+  return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+function createActionTools(env: Env, userId: string, callerJwt: string, fetchRecord: RecordFetch): ActionTools {
 
   // The DO returns ActionResult<unknown>; callers below supply the precise
   // operation result type fixed by the SDK tools-api wire contract.
@@ -78,7 +148,7 @@ function createActionTools(env: Env, userId: string, callerJwt: string): ActionT
     tool: string,
     params: Record<string, unknown>,
   ): Promise<ActionResult<TData>> {
-    const res = await stub.fetch(
+    const res = await fetchRecord(
       new Request('https://internal/api/tools/execute', {
         method: 'POST',
         headers: {
@@ -118,7 +188,7 @@ function createActionTools(env: Env, userId: string, callerJwt: string): ActionT
     // /api/integrations proxy does; otherwise an action looks for the user's
     // connection in a different namespace. Pre-first-deploy there is no token:
     // omit both and let the api-worker fail closed.
-    if (integrationName === 'composio' && env.APP_IDENTITY_TOKEN) {
+    if (env.APP_IDENTITY_TOKEN) {
       headers['x-app-identity-token'] = env.APP_IDENTITY_TOKEN
       headers['x-app-id'] = env.DEEPSPACE_APP_ID
     }
@@ -127,6 +197,7 @@ function createActionTools(env: Env, userId: string, callerJwt: string): ActionT
       method: 'POST',
       headers,
       body: JSON.stringify(data ?? {}),
+      signal: AbortSignal.timeout(35_000),
     })
     const payload = (await res.json()) as Record<string, unknown>
     if (!res.ok || payload.success === false) {
